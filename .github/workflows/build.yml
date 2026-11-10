@@ -4,8 +4,7 @@ name: Build Neoard Launcher APK
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   build:
@@ -21,7 +20,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle 8.9
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -29,13 +28,12 @@ jobs:
       - name: Extract source ZIP
         shell: bash
         run: |
-          set -e
-          ZIP=$(find . -type f -iname '*.zip' \
+          ZIP=$(find . -type f -name '*.zip' \
             -not -path './.git/*' | head -n 1)
 
           if [ -n "$ZIP" ]; then
-            mkdir -p source-unpacked
-            unzip -oq "$ZIP" -d source-unpacked
+            mkdir -p extracted
+            unzip -oq "$ZIP" -d extracted
           fi
 
       - name: Find Android project
@@ -43,18 +41,12 @@ jobs:
         shell: bash
         run: |
           set -e
-
-          SETTINGS=$(find . \
-            -type f \
-            \( -name settings.gradle \
-            -o -name settings.gradle.kts \) \
-            -not -path './.git/*' \
-            -not -path './.gradle/*' \
-            | head -n 1)
+          SETTINGS=$(find . -type f \
+            \( -name settings.gradle.kts -o -name settings.gradle \) \
+            -not -path './.git/*' | head -n 1)
 
           if [ -z "$SETTINGS" ]; then
-            echo "::error::Source Android belum diupload!"
-            find . -maxdepth 4 -type f
+            echo "::error::Gradle project not found"
             exit 1
           fi
 
@@ -62,11 +54,50 @@ jobs:
 
           if [ ! -f "$DIR/app/build.gradle.kts" ] && \
              [ ! -f "$DIR/app/build.gradle" ]; then
-            echo "::error::app/build.gradle tidak ditemukan!"
+            echo "::error::App Gradle file not found"
             exit 1
           fi
 
           echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Fix Java and Kotlin target
+        working-directory: ${{ steps.locate.outputs.dir }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("app/build.gradle.kts")
+          s = p.read_text()
+
+          if "compileOptions {" not in s:
+              s = s.replace(
+                  "\n}\n",
+                  """
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+          }
+          """,
+                  1
+              )
+
+          if "kotlinOptions {" not in s:
+              s = s.replace(
+                  "\n}\n",
+                  """
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+          """,
+                  1
+              )
+
+          p.write_text(s)
+          print("Java/Kotlin target configured.")
+          PY
 
       - name: Build APK
         working-directory: ${{ steps.locate.outputs.dir }}
