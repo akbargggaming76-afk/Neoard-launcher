@@ -28,6 +28,7 @@ jobs:
       - name: Extract source ZIP
         shell: bash
         run: |
+          set -e
           ZIP=$(find . -type f -name '*.zip' \
             -not -path './.git/*' | head -n 1)
 
@@ -41,9 +42,11 @@ jobs:
         shell: bash
         run: |
           set -e
+
           SETTINGS=$(find . -type f \
             \( -name settings.gradle.kts -o -name settings.gradle \) \
-            -not -path './.git/*' | head -n 1)
+            -not -path './.git/*' \
+            -not -path './.gradle/*' | head -n 1)
 
           if [ -z "$SETTINGS" ]; then
             echo "::error::Gradle project not found"
@@ -52,52 +55,57 @@ jobs:
 
           DIR=$(dirname "$SETTINGS")
 
-          if [ ! -f "$DIR/app/build.gradle.kts" ] && \
-             [ ! -f "$DIR/app/build.gradle" ]; then
-            echo "::error::App Gradle file not found"
+          if [ ! -f "$DIR/app/src/main/AndroidManifest.xml" ]; then
+            echo "::error::AndroidManifest.xml not found"
             exit 1
           fi
 
           echo "dir=$DIR" >> "$GITHUB_OUTPUT"
 
-      - name: Fix Java and Kotlin target
+      - name: Rewrite Android Gradle configuration
         working-directory: ${{ steps.locate.outputs.dir }}
         shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+              id("org.jetbrains.kotlin.plugin.compose")
+          }
 
-          p = Path("app/build.gradle.kts")
-          s = p.read_text()
+          android {
+              namespace = "com.neoard.launcher"
+              compileSdk = 35
 
-          if "compileOptions {" not in s:
-              s = s.replace(
-                  "\n}\n",
-                  """
+              defaultConfig {
+                  applicationId = "com.neoard.launcher"
+                  minSdk = 26
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "0.1"
+              }
+
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
                   targetCompatibility = JavaVersion.VERSION_17
               }
-          }
-          """,
-                  1
-              )
 
-          if "kotlinOptions {" not in s:
-              s = s.replace(
-                  "\n}\n",
-                  """
               kotlinOptions {
                   jvmTarget = "17"
               }
           }
-          """,
-                  1
-              )
 
-          p.write_text(s)
-          print("Java/Kotlin target configured.")
-          PY
+          dependencies {
+              implementation(platform("androidx.compose:compose-bom:2024.12.01"))
+              implementation("androidx.activity:activity-compose:1.10.0")
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.ui:ui-tooling-preview")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.compose.material:material-icons-extended")
+              implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+              debugImplementation("androidx.compose.ui:ui-tooling")
+          }
+          EOF
 
       - name: Build APK
         working-directory: ${{ steps.locate.outputs.dir }}
